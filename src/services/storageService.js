@@ -167,40 +167,47 @@ export const StorageService = {
     let lateCount = 0;
     const history = [];
 
-    Object.values(allRecords).forEach((session) => {
-      // Check if session applies to student's batch
-      if (session.batch === batch && session.records && session.records[studentId]) {
-        totalClasses += 1;
-        const status = session.records[studentId];
-        if (status === 'present') presentCount += 1;
-        else if (status === 'absent') absentCount += 1;
-        else if (status === 'late') lateCount += 1;
+    // Collect all sessions that were either conducted for this batch or recorded this student
+    const sessions = Object.values(allRecords || {}).filter((session) => {
+      const matchBatch = session.batch && batch && session.batch.trim().toLowerCase() === batch.trim().toLowerCase();
+      const hasRecord = session.records && session.records[studentId] !== undefined;
+      return matchBatch || hasRecord;
+    });
 
-        history.push({
-          date: session.date,
-          status,
-          subject: session.subject || 'Lecture',
-        });
+    sessions.forEach((session) => {
+      totalClasses += 1;
+      const status = (session.records && session.records[studentId]) || 'absent';
+      if (status === 'present') {
+        presentCount += 1;
+      } else if (status === 'late') {
+        lateCount += 1;
+      } else {
+        absentCount += 1;
       }
+
+      history.push({
+        date: session.date,
+        status,
+        subject: session.subject || 'Lecture',
+        batch: session.batch,
+      });
     });
 
     // Sort history date descending
     history.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-    // Academic percentage calculation: Late counts as 0.5 (or Present based on policy; here 0.5 attendance)
-    // Percentage formula: ((Present + 0.5 * Late) / Total) * 100
+    // Academic percentage calculation: Late counts as 0.5 (half credit)
     const effectiveAttended = presentCount + lateCount * 0.5;
     const percentage = totalClasses > 0 ? Math.round((effectiveAttended / totalClasses) * 1000) / 10 : 0;
 
     // Defaulter math: classes needed to attend consecutively to reach 75%
-    // (effectiveAttended + x) / (totalClasses + x) >= 0.75
-    // effectiveAttended + x >= 0.75 * totalClasses + 0.75 * x
-    // 0.25 * x >= 0.75 * totalClasses - effectiveAttended
-    // x >= (0.75 * totalClasses - effectiveAttended) / 0.25
+    // Condition: (effectiveAttended + X) / (totalClasses + X) >= 0.75
+    // X >= (0.75 * totalClasses - effectiveAttended) / 0.25
     let classesNeededFor75 = 0;
-    if (totalClasses > 0 && percentage < 75) {
+    const isDefaulter = totalClasses > 0 && percentage < 75;
+    if (isDefaulter) {
       const required = (0.75 * totalClasses - effectiveAttended) / 0.25;
-      classesNeededFor75 = Math.max(0, Math.ceil(required));
+      classesNeededFor75 = Math.max(1, Math.ceil(Math.round(required * 1000) / 1000));
     }
 
     return {
@@ -208,35 +215,48 @@ export const StorageService = {
       presentCount,
       absentCount,
       lateCount,
+      effectiveAttended,
       percentage,
+      isDefaulter,
       classesNeededFor75,
       history,
     };
   },
 
   calculateOverallStats(students, records, selectedBatch = null) {
-    const targetStudents = selectedBatch ? students.filter((s) => s.batch === selectedBatch) : students;
+    const isAll = !selectedBatch || selectedBatch === 'All';
+    const targetStudents = isAll
+      ? students
+      : students.filter((s) => s.batch && s.batch.trim().toLowerCase() === selectedBatch.trim().toLowerCase());
+
     const studentCount = targetStudents.length;
 
-    const sessions = Object.values(records).filter((r) =>
-      selectedBatch ? r.batch === selectedBatch : true
+    const sessions = Object.values(records || {}).filter((r) =>
+      isAll ? true : (r.batch && r.batch.trim().toLowerCase() === selectedBatch.trim().toLowerCase())
     );
 
-    let totalAttendanceEntries = 0;
-    let totalPresentEntries = 0;
     let defaultersCount = 0;
+    let criticalDefaultersCount = 0;
+    let borderlineDefaultersCount = 0;
 
     targetStudents.forEach((student) => {
       const stats = this.calculateStudentStats(student.id, student.batch, records);
-      if (stats.totalClasses > 0 && stats.percentage < 75) {
+      if (stats.isDefaulter) {
         defaultersCount += 1;
+        if (stats.percentage < 65) {
+          criticalDefaultersCount += 1;
+        } else {
+          borderlineDefaultersCount += 1;
+        }
       }
     });
+
+    let totalAttendanceEntries = 0;
+    let totalPresentEntries = 0;
 
     sessions.forEach((session) => {
       if (session.records) {
         Object.entries(session.records).forEach(([studentId, status]) => {
-          // Verify student belongs to target batch
           const belongs = targetStudents.some((s) => s.id === studentId);
           if (belongs) {
             totalAttendanceEntries += 1;
@@ -257,6 +277,8 @@ export const StorageService = {
       totalSessions: sessions.length,
       overallPercentage,
       defaultersCount,
+      criticalDefaultersCount,
+      borderlineDefaultersCount,
     };
   },
 

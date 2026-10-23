@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants/colors';
 
@@ -11,18 +11,33 @@ export default function StatCard({
   color = COLORS.primary,
   bgColor = COLORS.primaryLight,
   style,
+  onPress,
 }) {
+  const CardWrapper = onPress ? TouchableOpacity : View;
+
   return (
-    <View style={[styles.card, style]}>
+    <CardWrapper
+      style={[styles.card, style]}
+      onPress={onPress}
+      activeOpacity={onPress ? 0.75 : 1}
+    >
       <View style={styles.topRow}>
         <View style={[styles.iconContainer, { backgroundColor: bgColor }]}>
           <Ionicons name={icon} size={20} color={color} />
         </View>
         <Text style={styles.title}>{title}</Text>
+        {onPress && (
+          <Ionicons
+            name="chevron-forward"
+            size={16}
+            color={COLORS.textMuted}
+            style={{ marginLeft: 4 }}
+          />
+        )}
       </View>
       <Text style={[styles.value, { color }]}>{value}</Text>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-    </View>
+    </CardWrapper>
   );
 }
 

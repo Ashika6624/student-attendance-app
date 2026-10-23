@@ -23,6 +23,7 @@ export default function DashboardScreen({ navigation }) {
     selectedBatch,
     setSelectedBatch,
     getOverallStats,
+    getStudentStats,
     resetDemoData,
     clearAllData,
   } = useAttendance();
@@ -35,23 +36,20 @@ export default function DashboardScreen({ navigation }) {
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 4);
 
-  // Identify defaulters
+  // Identify defaulters consistently using centralized calculation
   const defaultersList = students
-    .filter((s) => (selectedBatch === 'All' ? true : s.batch === selectedBatch))
+    .filter((s) => (selectedBatch === 'All' ? true : s.batch?.trim() === selectedBatch?.trim()))
     .map((s) => {
-      let total = 0;
-      let present = 0;
-      Object.values(records).forEach((rec) => {
-        if (rec.batch === s.batch && rec.records && rec.records[s.id]) {
-          total += 1;
-          if (rec.records[s.id] === 'present') present += 1;
-          else if (rec.records[s.id] === 'late') present += 0.5;
-        }
-      });
-      const pct = total > 0 ? Math.round((present / total) * 1000) / 10 : 0;
-      return { ...s, totalClasses: total, percentage: pct };
+      const studentStats = getStudentStats(s.id, s.batch);
+      return {
+        ...s,
+        totalClasses: studentStats.totalClasses,
+        percentage: studentStats.percentage,
+        isDefaulter: studentStats.isDefaulter,
+        classesNeeded: studentStats.classesNeededFor75,
+      };
     })
-    .filter((s) => s.totalClasses > 0 && s.percentage < 75);
+    .filter((s) => s.isDefaulter);
 
   const handleResetDemo = () => {
     Alert.alert(
@@ -124,7 +122,7 @@ export default function DashboardScreen({ navigation }) {
         {defaultersList.length > 0 && (
           <TouchableOpacity
             style={styles.defaulterBanner}
-            onPress={() => navigation.navigate('Reports', { initialTab: 'defaulters' })}
+            onPress={() => navigation.navigate('Reports', { initialTab: 'defaulters', timestamp: Date.now() })}
             activeOpacity={0.8}
           >
             <View style={styles.defaulterIcon}>
@@ -135,7 +133,7 @@ export default function DashboardScreen({ navigation }) {
                 {defaultersList.length} Student{defaultersList.length > 1 ? 's' : ''} Below 75% Threshold
               </Text>
               <Text style={styles.defaulterSubtitle}>
-                Attendance shortage detected in {selectedBatch}. Tap to view defaulter report.
+                Attendance shortage in {selectedBatch}. Tap to view defaulter report & recovery.
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={COLORS.danger} />
@@ -178,11 +176,12 @@ export default function DashboardScreen({ navigation }) {
             <StatCard
               title="Defaulters"
               value={stats.defaultersCount}
-              subtitle="Below 75% limit"
+              subtitle="Below 75% (Tap to view)"
               icon="alert-circle"
               color={stats.defaultersCount > 0 ? COLORS.absent : COLORS.present}
               bgColor={stats.defaultersCount > 0 ? COLORS.absentLight : COLORS.presentLight}
               style={{ marginLeft: 8 }}
+              onPress={() => navigation.navigate('Reports', { initialTab: 'defaulters', timestamp: Date.now() })}
             />
           </View>
         </View>

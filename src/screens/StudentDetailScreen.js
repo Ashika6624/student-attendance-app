@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAttendance } from '../context/AttendanceContext';
+import { StorageService } from '../services/storageService';
 import { COLORS } from '../constants/colors';
 import ProgressBar from '../components/ProgressBar';
 import AttendanceStatusBadge from '../components/AttendanceStatusBadge';
@@ -22,46 +23,21 @@ export default function StudentDetailScreen({ navigation, route }) {
   // Find latest state of this student in case it was updated
   const currentStudent = students.find((s) => s.id === student.id) || student;
 
-  // Compute attendance stats
-  let totalClasses = 0;
-  let presentCount = 0;
-  let absentCount = 0;
-  let lateCount = 0;
-  const history = [];
+  // Compute attendance stats using centralized calculation
+  const stats = StorageService.calculateStudentStats(
+    currentStudent.id,
+    currentStudent.batch,
+    records
+  );
 
-  Object.values(records).forEach((session) => {
-    if (
-      session.batch === currentStudent.batch &&
-      session.records &&
-      session.records[currentStudent.id]
-    ) {
-      totalClasses += 1;
-      const status = session.records[currentStudent.id];
-      if (status === 'present') presentCount += 1;
-      else if (status === 'absent') absentCount += 1;
-      else if (status === 'late') lateCount += 1;
-
-      history.push({
-        date: session.date,
-        subject: session.subject || 'Lecture',
-        status,
-      });
-    }
-  });
-
-  // Sort history descending by date
-  history.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  const effectiveAttended = presentCount + lateCount * 0.5;
-  const percentage =
-    totalClasses > 0 ? Math.round((effectiveAttended / totalClasses) * 1000) / 10 : 0;
-
-  // Classes needed to reach 75%
-  let classesNeeded = 0;
-  if (totalClasses > 0 && percentage < 75) {
-    const req = (0.75 * totalClasses - effectiveAttended) / 0.25;
-    classesNeeded = Math.max(0, Math.ceil(req));
-  }
+  const totalClasses = stats.totalClasses;
+  const presentCount = stats.presentCount;
+  const absentCount = stats.absentCount;
+  const lateCount = stats.lateCount;
+  const percentage = stats.percentage;
+  const isDefaulter = stats.isDefaulter;
+  const classesNeeded = stats.classesNeededFor75;
+  const history = stats.history;
 
   const handleCall = () => {
     if (currentStudent.phone) {

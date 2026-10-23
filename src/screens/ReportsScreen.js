@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAttendance } from '../context/AttendanceContext';
+import { StorageService } from '../services/storageService';
 import { COLORS } from '../constants/colors';
 import ProgressBar from '../components/ProgressBar';
 import AttendanceStatusBadge from '../components/AttendanceStatusBadge';
@@ -30,6 +31,13 @@ export default function ReportsScreen({ navigation, route }) {
     deleteAttendance,
   } = useAttendance();
 
+  // Listen to tab changes passed through navigation (e.g., from Dashboard Defaulter alerts)
+  useEffect(() => {
+    if (route.params?.initialTab) {
+      setActiveTab(route.params.initialTab);
+    }
+  }, [route.params?.initialTab, route.params?.timestamp]);
+
   // For Date-Wise Tab
   const availableSessions = Object.values(records)
     .filter((r) => (selectedBatch === 'All' ? true : r.batch === selectedBatch))
@@ -45,50 +53,27 @@ export default function ReportsScreen({ navigation, route }) {
   // Current session object
   const currentSession = records[selectedSessionKey] || availableSessions[0] || null;
 
-  // Student-wise calculations
+  // Student-wise calculations using centralized StorageService calculation
   const studentRankings = students
-    .filter((s) => (selectedBatch === 'All' ? true : s.batch === selectedBatch))
+    .filter((s) => (selectedBatch === 'All' ? true : s.batch?.trim() === selectedBatch?.trim()))
     .map((s) => {
-      let total = 0;
-      let present = 0;
-      let absent = 0;
-      let late = 0;
-
-      Object.values(records).forEach((rec) => {
-        if (rec.batch === s.batch && rec.records && rec.records[s.id]) {
-          total += 1;
-          if (rec.records[s.id] === 'present') present += 1;
-          else if (rec.records[s.id] === 'absent') absent += 1;
-          else if (rec.records[s.id] === 'late') late += 1;
-        }
-      });
-
-      const effective = present + late * 0.5;
-      const pct = total > 0 ? Math.round((effective / total) * 1000) / 10 : 0;
-
-      // Classes needed to reach 75%
-      let classesNeeded = 0;
-      if (total > 0 && pct < 75) {
-        const req = (0.75 * total - effective) / 0.25;
-        classesNeeded = Math.max(0, Math.ceil(req));
-      }
-
+      const stats = StorageService.calculateStudentStats(s.id, s.batch, records);
       return {
         ...s,
-        totalClasses: total,
-        presentCount: present,
-        absentCount: absent,
-        lateCount: late,
-        percentage: pct,
-        classesNeeded,
+        totalClasses: stats.totalClasses,
+        presentCount: stats.presentCount,
+        absentCount: stats.absentCount,
+        lateCount: stats.lateCount,
+        effectiveAttended: stats.effectiveAttended,
+        percentage: stats.percentage,
+        isDefaulter: stats.isDefaulter,
+        classesNeeded: stats.classesNeededFor75,
       };
     })
     .sort((a, b) => b.percentage - a.percentage);
 
   // Defaulters list (< 75%)
-  const defaultersList = studentRankings.filter(
-    (s) => s.totalClasses > 0 && s.percentage < 75
-  );
+  const defaultersList = studentRankings.filter((s) => s.isDefaulter);
 
   // Export / Share function
   const handleExportShare = async () => {
@@ -404,66 +389,146 @@ export default function ReportsScreen({ navigation, route }) {
 
   // Render Defaulters Content (< 75%)
   const renderDefaultersContent = () => {
+    const criticalCount = defaultersList.filter((s) => s.percentage < 65).length;
+    const borderlineCount = defaultersList.filter((s) => s.percentage >= 65 && s.percentage < 75).length;
+
     return (
       <View style={styles.tabContentContainer}>
         {/* Defaulter Policy Note */}
         <View style={styles.policyCard}>
-          <Ionicons name="information-circle" size={20} color={COLORS.danger} />
-          <Text style={styles.policyText}>
-            Academic Regulation: Students falling below <Text style={{ fontWeight: '700' }}>75%</Text> aggregate
-            attendance are deemed ineligible for end-semester examinations unless recovered.
-          </Text>
+          <Ionicons name="information-circle" size={22} color={COLORS.danger} />
+          <View style={{ flex: 1, marginLeft: 8 }}>
+            <Text style={styles.policyText}>
+              Academic Regulation: Students falling below <Text style={{ fontWeight: '700' }}>75%</Text> aggregate
+              attendance are deemed ineligible for end-semester examinations unless recovered.
+            </Text>
+            {defaultersList.length > 0 && (
+              <View style={styles.defaulterStatPillsRow}>
+                <View style={[styles.statPill, { backgroundColor: '#FEE2E2' }]}>
+                  <Text style={[styles.statPillText, { color: COLORS.danger }]}>
+                    Critical (&lt;65%): {criticalCount}
+                  </Text>
+                </View>
+                <View style={[styles.statPill, { backgroundColor: '#FEF3C7', marginLeft: 6 }]}>
+                  <Text style={[styles.statPillText, { color: COLORS.lateDark }]}>
+                    At Risk (65-74%): {borderlineCount}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
         </View>
 
         <FlatList
           data={defaultersList}
           keyExtractor={(item) => item.id}
           scrollEnabled={false}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.defaulterCard}
-              onPress={() => navigation.navigate('StudentDetail', { student: item })}
-              activeOpacity={0.7}
-            >
-              <View style={styles.defaulterHeaderRow}>
-                <View style={styles.defaulterNameBlock}>
-                  <Text style={styles.defaulterStudentName}>{item.name}</Text>
-                  <Text style={styles.defaulterStudentRoll}>
-                    {item.rollNo} • {item.batch}
+          renderItem={({ item }) => {
+            const isCritical = item.percentage < 65;
+            const projectedPct =
+              item.totalClasses + item.classesNeeded > 0
+                ? Math.round(
+                    ((item.effectiveAttended + item.classesNeeded) /
+                      (item.totalClasses + item.classesNeeded)) *
+                      1000
+                  ) / 10
+                : 75;
+
+            return (
+              <TouchableOpacity
+                style={[
+                  styles.defaulterCard,
+                  isCritical ? styles.defaulterCardCritical : styles.defaulterCardBorderline,
+                ]}
+                onPress={() => navigation.navigate('StudentDetail', { student: item })}
+                activeOpacity={0.7}
+              >
+                <View style={styles.defaulterHeaderRow}>
+                  <View style={styles.defaulterNameBlock}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={styles.defaulterStudentName}>{item.name}</Text>
+                      <View
+                        style={[
+                          styles.severityTag,
+                          { backgroundColor: isCritical ? '#FEE2E2' : '#FEF3C7' },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.severityTagText,
+                            { color: isCritical ? COLORS.danger : COLORS.lateDark },
+                          ]}
+                        >
+                          {isCritical ? 'CRITICAL' : 'AT RISK'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.defaulterStudentRoll}>
+                      {item.rollNo} • {item.batch}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.shortageBadge,
+                      { backgroundColor: isCritical ? COLORS.absentLight : COLORS.lateLight },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.shortageText,
+                        { color: isCritical ? COLORS.danger : COLORS.lateDark },
+                      ]}
+                    >
+                      {item.percentage}%
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Progress bar comparing with 75% goal */}
+                <View style={{ marginVertical: 8 }}>
+                  <ProgressBar percentage={item.percentage} height={6} />
+                </View>
+
+                <View style={styles.defaulterMetricRow}>
+                  <Text style={styles.attendedRatio}>
+                    Attended: <Text style={{ fontWeight: '700' }}>{item.presentCount}</Text>
+                    {item.lateCount > 0 ? ` (+${item.lateCount} late)` : ''} of {item.totalClasses} lectures
+                  </Text>
+                  <Text style={styles.absentRatio}>
+                    Missed: <Text style={{ fontWeight: '700', color: COLORS.danger }}>{item.absentCount}</Text> lectures
                   </Text>
                 </View>
-                <View style={styles.shortageBadge}>
-                  <Text style={styles.shortageText}>{item.percentage}%</Text>
+
+                {/* Recovery Formula Chip */}
+                <View style={styles.recoveryChip}>
+                  <Ionicons name="sparkles" size={15} color={COLORS.lateDark} />
+                  <View style={{ marginLeft: 6, flex: 1 }}>
+                    <Text style={styles.recoveryText}>
+                      Recovery: Must attend next{' '}
+                      <Text style={{ fontWeight: '800', color: COLORS.danger }}>
+                        {item.classesNeeded} consecutive class{item.classesNeeded > 1 ? 'es' : ''}
+                      </Text>{' '}
+                      to achieve 75%.
+                    </Text>
+                    <Text style={styles.projectedText}>
+                      Projected attendance after recovery: {projectedPct}%
+                    </Text>
+                  </View>
                 </View>
-              </View>
-
-              <View style={styles.defaulterMetricRow}>
-                <Text style={styles.attendedRatio}>
-                  Attended: <Text style={{ fontWeight: '700' }}>{item.presentCount}</Text> of {item.totalClasses} lectures
-                </Text>
-                <Text style={styles.absentRatio}>
-                  Missed: <Text style={{ fontWeight: '700', color: COLORS.danger }}>{item.absentCount}</Text> lectures
-                </Text>
-              </View>
-
-              {/* Recovery Formula Chip */}
-              <View style={styles.recoveryChip}>
-                <Ionicons name="sparkles" size={14} color={COLORS.lateDark} />
-                <Text style={styles.recoveryText}>
-                  Recovery: Must attend next{' '}
-                  <Text style={{ fontWeight: '800', color: COLORS.danger }}>
-                    {item.classesNeeded} consecutive class{item.classesNeeded > 1 ? 'es' : ''}
-                  </Text>{' '}
-                  to achieve 75%.
-                </Text>
-              </View>
-            </TouchableOpacity>
-          )}
+              </TouchableOpacity>
+            );
+          }}
           ListEmptyComponent={
             <EmptyState
               icon="shield-checkmark"
               title="No Defaulters Found!"
-              description="All students in this batch have 75% or higher attendance."
+              description={
+                selectedBatch === 'All'
+                  ? 'All registered students across all batches have 75% or higher attendance.'
+                  : `All students in ${selectedBatch} have 75% or higher attendance.`
+              }
+              actionLabel={selectedBatch !== 'All' ? 'View All Batches' : undefined}
+              onAction={selectedBatch !== 'All' ? () => setSelectedBatch('All') : undefined}
             />
           }
         />
@@ -962,5 +1027,43 @@ const styles = StyleSheet.create({
     color: COLORS.lateDark,
     marginLeft: 6,
     flex: 1,
+  },
+  defaulterStatPillsRow: {
+    flexDirection: 'row',
+    marginTop: 8,
+  },
+  statPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  statPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  defaulterCardCritical: {
+    borderColor: '#FECACA',
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.danger,
+  },
+  defaulterCardBorderline: {
+    borderColor: '#FEF3C7',
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.late,
+  },
+  severityTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  severityTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  projectedText: {
+    fontSize: 10,
+    color: COLORS.textSecondary,
+    marginTop: 2,
   },
 });
