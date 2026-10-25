@@ -111,13 +111,37 @@ npx expo start
 ```
 
 ### Step 3: Launch on Your Preferred Platform
-- **On Physical Mobile Phone (Android/iOS)**:
+- **On Physical Mobile Phone (Expo Go Sandbox)**:
   1. Open the **Expo Go** app on your phone.
   2. Scan the QR code displayed in the terminal.
 - **On Web Browser**:
   - Press `w` in the terminal to launch the web preview in your browser (`http://localhost:8081`).
 - **On Android Emulator**:
   - Press `a` in the terminal (requires Android Studio installed).
+
+---
+
+## 📦 How to Build Standalone APK (Install Directly on Phone)
+
+To install the app permanently on your Android phone as a standalone app with its own home screen icon and 100% offline support (no laptop needed):
+
+1. **Log in to Expo:**
+   ```powershell
+   npx eas-cli login
+   ```
+2. **Build Standalone APK:**
+   ```powershell
+   npx eas-cli build -p android --profile preview
+   ```
+3. Scan the generated QR code or open the download link to install the `.apk` on your phone!
+
+---
+
+## 📑 Included MCA Project Reports
+
+- 📄 **10-Page Academic Project Report:** [`docs/StudentAttendanceApp_10Page_Report.docx`](docs/StudentAttendanceApp_10Page_Report.docx)
+- 📄 **Comprehensive Detailed Report:** [`docs/PROJECT_REPORT.md`](docs/PROJECT_REPORT.md)
+- 📄 **Original Full Report:** [`docs/StudentAttendanceApp_Report.docx`](docs/StudentAttendanceApp_Report.docx)
 
 ---
 
