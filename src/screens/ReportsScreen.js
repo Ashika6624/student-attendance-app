@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
   FlatList,
   TouchableOpacity,
   Share,
@@ -10,6 +11,7 @@ import {
   StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAttendance } from '../context/AttendanceContext';
 import { StorageService } from '../services/storageService';
@@ -32,11 +34,14 @@ export default function ReportsScreen({ navigation, route }) {
   } = useAttendance();
 
   // Listen to tab changes passed through navigation (e.g., from Dashboard Defaulter alerts)
-  useEffect(() => {
-    if (route.params?.initialTab) {
-      setActiveTab(route.params.initialTab);
-    }
-  }, [route.params?.initialTab, route.params?.timestamp]);
+  // useFocusEffect guarantees tab switches immediately on native Android
+  useFocusEffect(
+    useCallback(() => {
+      if (route.params?.initialTab) {
+        setActiveTab(route.params.initialTab);
+      }
+    }, [route.params?.initialTab, route.params?.timestamp])
+  );
 
   // For Date-Wise Tab
   const availableSessions = Object.values(records)
@@ -300,14 +305,17 @@ export default function ReportsScreen({ navigation, route }) {
         </View>
 
         {/* Student Roll Call Results */}
-        <FlatList
-          data={displayedStudents}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-          renderItem={({ item }) => {
+        {displayedStudents.length === 0 ? (
+          <EmptyState
+            icon="people-outline"
+            title="No Records Found"
+            description="No students match the selected filter."
+          />
+        ) : (
+          displayedStudents.map((item) => {
             const stStatus = currentSession.records[item.id] || 'unmarked';
             return (
-              <View style={styles.rollItem}>
+              <View key={item.id} style={styles.rollItem}>
                 <View style={styles.rollLeft}>
                   <Text style={styles.rollNo}>{item.rollNo}</Text>
                   <Text style={styles.studentName} numberOfLines={1}>
@@ -317,8 +325,8 @@ export default function ReportsScreen({ navigation, route }) {
                 <AttendanceStatusBadge status={stStatus} size="small" />
               </View>
             );
-          }}
-        />
+          })
+        )}
       </View>
     );
   };
@@ -327,12 +335,16 @@ export default function ReportsScreen({ navigation, route }) {
   const renderStudentWiseContent = () => {
     return (
       <View style={styles.tabContentContainer}>
-        <FlatList
-          data={studentRankings}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-          renderItem={({ item, index }) => (
+        {studentRankings.length === 0 ? (
+          <EmptyState
+            icon="stats-chart"
+            title="No Students Registered"
+            description="Register students to see overall percentage rankings."
+          />
+        ) : (
+          studentRankings.map((item, index) => (
             <TouchableOpacity
+              key={item.id}
               style={styles.rankingCard}
               onPress={() => navigation.navigate('StudentDetail', { student: item })}
               activeOpacity={0.7}
@@ -374,15 +386,8 @@ export default function ReportsScreen({ navigation, route }) {
                 </Text>
               </View>
             </TouchableOpacity>
-          )}
-          ListEmptyComponent={
-            <EmptyState
-              icon="stats-chart"
-              title="No Students Registered"
-              description="Register students to see overall percentage rankings."
-            />
-          }
-        />
+          ))
+        )}
       </View>
     );
   };
@@ -419,11 +424,20 @@ export default function ReportsScreen({ navigation, route }) {
           </View>
         </View>
 
-        <FlatList
-          data={defaultersList}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-          renderItem={({ item }) => {
+        {defaultersList.length === 0 ? (
+          <EmptyState
+            icon="shield-checkmark"
+            title="No Defaulters Found!"
+            description={
+              selectedBatch === 'All'
+                ? 'All registered students across all batches have 75% or higher attendance.'
+                : `All students in ${selectedBatch} have 75% or higher attendance.`
+            }
+            actionLabel={selectedBatch !== 'All' ? 'View All Batches' : undefined}
+            onAction={selectedBatch !== 'All' ? () => setSelectedBatch('All') : undefined}
+          />
+        ) : (
+          defaultersList.map((item) => {
             const isCritical = item.percentage < 65;
             const projectedPct =
               item.totalClasses + item.classesNeeded > 0
@@ -436,6 +450,7 @@ export default function ReportsScreen({ navigation, route }) {
 
             return (
               <TouchableOpacity
+                key={item.id}
                 style={[
                   styles.defaulterCard,
                   isCritical ? styles.defaulterCardCritical : styles.defaulterCardBorderline,
@@ -517,21 +532,8 @@ export default function ReportsScreen({ navigation, route }) {
                 </View>
               </TouchableOpacity>
             );
-          }}
-          ListEmptyComponent={
-            <EmptyState
-              icon="shield-checkmark"
-              title="No Defaulters Found!"
-              description={
-                selectedBatch === 'All'
-                  ? 'All registered students across all batches have 75% or higher attendance.'
-                  : `All students in ${selectedBatch} have 75% or higher attendance.`
-              }
-              actionLabel={selectedBatch !== 'All' ? 'View All Batches' : undefined}
-              onAction={selectedBatch !== 'All' ? () => setSelectedBatch('All') : undefined}
-            />
-          }
-        />
+          })
+        )}
       </View>
     );
   };
@@ -648,18 +650,15 @@ export default function ReportsScreen({ navigation, route }) {
         </TouchableOpacity>
       </View>
 
-      {/* Scrollable Content */}
-      <FlatList
-        data={[1]}
-        keyExtractor={() => 'reports-content'}
+      {/* Scrollable Content (Clean single ScrollView for native Android reliability) */}
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
-        renderItem={() => {
-          if (activeTab === 'dateWise') return renderDateWiseContent();
-          if (activeTab === 'studentWise') return renderStudentWiseContent();
-          return renderDefaultersContent();
-        }}
-      />
+        contentContainerStyle={{ paddingBottom: 50 }}
+      >
+        {activeTab === 'dateWise' && renderDateWiseContent()}
+        {activeTab === 'studentWise' && renderStudentWiseContent()}
+        {activeTab === 'defaulters' && renderDefaultersContent()}
+      </ScrollView>
     </SafeAreaView>
   );
 }
